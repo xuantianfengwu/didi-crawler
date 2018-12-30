@@ -1,7 +1,7 @@
 import pymysql
 from sqlalchemy import create_engine
 import pandas as pd
-from Crawlnalyzer.config.config import mysql_config
+from utilities.config import mysql_config
 
 class MysqlHelper:
     '''python操作mysql的的封装'''

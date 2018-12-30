@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import urllib
 import datetime as dt
-from Crawlnalyzer.config.config import weibo_config
+from utilities.config import weibo_config
 
 class Weibo_Crawler(object):
     def __init__(self):
