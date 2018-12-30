@@ -4,6 +4,7 @@ import requests
 import urllib
 import datetime as dt
 from utilities.config import weibo_config
+import time
 
 class Weibo_Crawler(object):
     def __init__(self):
@@ -53,13 +54,6 @@ class Weibo_Crawler(object):
                 print('登录失败！')
                 print(ex)
 
-    @staticmethod
-    def gen_search_q(kword):
-        ''' search_base_url中应使用url编码过的关键词 '''
-        q = '=1&q=' + kword
-        q = urllib.parse.quote(q)
-        return q
-
     def search_one_page(self, kword, p, typ='df'):
         '''
          爬取某 关键词（kword）的搜索结果的第p页
@@ -77,42 +71,106 @@ class Weibo_Crawler(object):
         q = self.gen_search_q(kword)
         url = self.search_base_url.format(q, p)
         res = self.sess.get(url)
-        dict_search_res = res.json()
+        search_res = res.json()
 
         now_dt = dt.datetime.now()
-        dict_search_res['crawl_time'] = now_dt.strftime('%Y-%m-%d %H:%M')
+        search_res['crawl_time'] = now_dt.strftime('%Y-%m-%d %H:%M:%S')
+        search_res['keyword'] = kword
 
         if typ == 'df':
-            df_search_res = self.search_res_dict_to_df(dict_search_res)
-            df_search_res = self.df_add_derivative_cols(df_search_res, now_dt)
-            return df_search_res
-        else:
-            return dict_search_res
+            search_res = self.search_dict2df(search_res)
+        return search_res
 
-    def search_crawl_all_pages(self, kword, pages=10, typ='df'):
-        # 爬取某 关键词（kword）搜索结果的前p页， 调用search_crawl_one_page()， 返回json_list或df
+    def search_many_pages(self, kword, pages=10, typ='df', interval=0.5):
+        '''
+        爬取某 关键词（kword）搜索结果的前p页， 调用search_one_page()
+        :param kword:
+        :param pages:
+        :param typ:
+        :return: 返回json_list或df
+        '''
         self._login()
         if typ not in ['df', 'dict']:
-            print('search_crawl_all_pages的参数typ有误，请确认！')
+            print('search_many_pages的参数typ有误，请确认！')
             return
 
         print('开始搜索...')
         print('关键词：【{}】'.format(kword))
         print('搜索总页数：【{}】'.format(pages))
-        if typ == 'df':
-            df_search_reses = [self.search_crawl_one_page(kword, p, typ) for p in range(1, pages + 1)]
-            df_search_res = pd.concat(df_search_reses, ignore_index=True)
-            return df_search_res
-        else:
-            dict_search_res = {'page={}'.format(p): self.search_crawl_one_page(kword, p, typ)
-                               for p in range(1, pages + 1)}
-            return dict_search_res
+        search_res = []
+        for p in range(1, pages + 1):
+            search_res.append(self.search_one_page(kword, p, 'dict'))
+            time.sleep(interval)
 
-    def search_res_dict_to_df(self, dict_res):
-        # 将 dict格式的关键词搜索结果转化为需要的 df
+        if typ == 'df':
+            search_res = [self.search_dict2df(d) for d in search_res]
+            search_res = pd.concat(search_res, ignore_index=True)
+            search_res.drop_duplicates('mid', inplace=True)
+            print('总条数：【{}】'.format(len(search_res)))
+        return search_res
+
+    def comment_one_page(self, mid, p, typ='df'):
+        '''
+        获取某 mid 的第p页上的评论
+        :param mid:
+        :param p:
+        :param typ:
+        :return:
+        '''
+        self._login()
+        if typ not in ['dict', 'df']:
+            print('comment_one_page的参数typ有误，请确认！')
+            return
+
+        print(p)
+        url = self.comm_base_url.format(mid, p)
+        comm = self.sess.get(url).json()
+
+        now_dt = dt.datetime.now()
+        comm['crawl_time'] = now_dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        if typ == 'df':
+            self.comm_dict2df(comm)
+            comm = pd.DataFrame(comm['data']['data'])
+        return comm
+
+    def comment_all_pages(self, mid, typ='df', interval=0.5):
+        # 获取某 mid 对应的全部评论
+        self._login()
+        if typ not in ['dict', 'df']:
+            print('mid_comm_crawl_all_pages的参数typ有误，请确认！')
+            return
+
+        p = 1
+        comm_all = []
+        while 1:
+            comm = self.comment_one_page(mid, p, 'dict')
+            if 'data' in comm:
+                comm_all.append(comm)
+                time.sleep(interval)
+                p += 1
+            else:
+                break
+
+        if typ == 'df':
+            comm_all = [self.comment_dict2df(comm) for comm in comm_all]
+            comm_all = pd.concat(comm_all, ignore_index=True)
+            print('mid={} 的微博共爬取到 {}条 评论'.format(mid, len(comm_all)))
+        return comm_all
+
+    @staticmethod
+    def gen_search_q(kword):
+        ''' search_base_url中应使用url编码过的关键词 '''
+        q = '=1&q=' + kword
+        q = urllib.parse.quote(q)
+        return q
+
+    @classmethod
+    def search_dict2df(self, dict_res):
+        ''' 将 dict格式的关键词搜索结果转化为需要的 df '''
+
         final = []
-        need_cols1 = ['edit_at', 'mid', 'text', 'reposts_count', 'comments_count', 'attitudes_count']
-        need_cols2 = ['created_at', 'mid', 'text', 'reposts_count', 'comments_count', 'attitudes_count']
+        need_cols = ['created_at', 'mid', 'text', 'reposts_count', 'comments_count', 'attitudes_count']
         cards = dict_res['data']['cards']
 
         card_groups = []
@@ -123,62 +181,25 @@ class Weibo_Crawler(object):
             if 'mblog' not in card_g:
                 continue
             log = card_g['mblog']
-            final.append([log[c] for c in need_cols2])
-        final = pd.DataFrame(final, columns=need_cols2)
+            final.append([log[c] for c in need_cols])
+        final = pd.DataFrame(final, columns=need_cols)
+        final['keyword'] = dict_res['keyword']
+        str_now_dt = dict_res['crawl_time']
+        final['crawl_time'] = str_now_dt
+        now_dt = dt.datetime.strptime(str_now_dt, '%Y-%m-%d %H:%M:%S')
+        final['std_created_at'] = final['created_at'].apply(lambda x: Weibo_Crawler.created_at_to_time(x, now_dt))
         return final
 
-    def mid_comm_crawl_one_page(self, mid, p, typ='df'):
-        # 获取某 mid 的第p页上的评论
-        self._login()
-        if typ not in ['dict', 'df']:
-            print('mid_comm_crawl_one_page的参数typ有误，请确认！')
-            return
-
-        url = self.comm_url.format(mid, p)
-        json_comm = self.sess.get(url)
-        dict_comm = json_comm.json()
-        now_dt = dt.datetime.now()
-        dict_comm['crawl_time'] = now_dt.strftime('%Y-%m-%d %H:%M:%S')
-        if typ == 'df':
-            df_comm = pd.DataFrame(dict_comm['data']['data'])
-            df_comm = self.df_add_derivative_cols(df_comm, now_dt)
-            del df_comm['liked']
-            return df_comm
-        return dict_comm
-
-    def mid_comm_crawl_all_pages(self, mid, typ='df'):
-        # 获取某 mid 对应的全部评论
-        self._login()
-        if typ not in ['dict', 'df']:
-            print('mid_comm_crawl_all_pages的参数typ有误，请确认！')
-            return
-
-        p = 1
-        dict_comm_final = {}
-        while 1:
-            dict_comm = self.mid_comm_crawl_one_page(mid, p, 'dict')
-            if 'data' in dict_comm:
-                print(p)
-                dict_comm_final['page={}'.format(p)] = dict_comm
-                p += 1
-            else:
-                break
-        print('mid={} 的微博共爬取到 {}页 评论'.format(mid, p - 1))
-        if typ == 'df':
-            df_comm = [self.mid_comm_dict_to_df(dict_comm_final['page={}'.format(p)]) for p in range(1, p)]
-            df_comm = pd.concat(df_comm, ignore_index=True)
-            print('mid={} 的微博共爬取到 {}条 评论'.format(mid, len(df_comm)))
-            return df_comm
-        else:
-            return dict_comm_lst
-
     @staticmethod
-    def mid_comm_dict_to_df(dict_comm):
-        df_comm = pd.DataFrame(dict_comm['data']['data'])
-        del df_comm['liked']
-        now_dt = dt.datetime.strptime(dict_comm['crawl_time'], '%Y-%m-%d %H:%M:%S')
-        df_comm = Weibo_Crawler.df_add_derivative_cols(df_comm, now_dt)
-        return df_comm
+    def comment_dict2df(dict_res):
+        final = pd.DataFrame(dict_res['data']['data'])
+        now_dt = dict_res['created_time']
+
+        str_now_dt = dict_res['crawl_time']
+        final['crawl_time'] = str_now_dt
+        now_dt = dt.datetime.strptime(str_now_dt, '%Y-%m-%d %H:%M:%S')
+        final['std_created_at'] = final['created_at'].apply(lambda x: Weibo_Crawler.created_at_to_time(x, now_dt))
+        return final
 
     @staticmethod
     def created_at_to_time(created_at, now_dt):
@@ -198,9 +219,3 @@ class Weibo_Crawler(object):
         else:
             f_create_dt = '{}-{}'.format(now_dt.year, created_at)
         return f_create_dt
-
-    @staticmethod
-    def df_add_derivative_cols(df, now_dt):
-        df['crawl_time'] = now_dt.strftime('%Y-%m-%d %H:%M:%S')
-        df['std_created_at'] = df['created_at'].apply(lambda x: Weibo_Crawler.created_at_to_time(x, now_dt))
-        return df

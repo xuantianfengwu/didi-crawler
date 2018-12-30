@@ -24,6 +24,7 @@ class MysqlHelper:
         self.password = mysql_config['password']
         self.charset = mysql_config['charset']
         self.conn = None
+        self.cur = None
         self.__connect(**mysql_config)
         self.all_tables = [x[0] for x in self.query_data('show tables')]
         # pymysql:
@@ -37,14 +38,19 @@ class MysqlHelper:
         获取连接对象和执行对象
         :return:
         '''
-        if self.conn == None:
-            self.conn = pymysql.connect(host=self.host,
-                                        user=self.user,
-                                        password=self.password,
-                                        database=self.database,
-                                        port=self.port,
-                                        charset=self.charset)
-            self.cur = self.conn.cursor()
+        if self.cur == None:
+            try:
+                if self.conn == None:
+                    self.conn = pymysql.connect(host=self.host,
+                                                user=self.user,
+                                                password=self.password,
+                                                database=self.database,
+                                                port=self.port,
+                                                charset=self.charset)
+                self.cur = self.conn.cursor()
+            except Exception as err:
+                print('连接失败！')
+                print(err)
 
     def close(self):
         '''
@@ -52,8 +58,9 @@ class MysqlHelper:
         '''
         if self.cur != None:
             self.cur.close()
-        if self.conn != None:
-            self.conn.close()
+            self.cur = None
+        #if self.conn != None:
+        #    self.conn.close()
 
     def query_data(self, sql, params=None):
         '''
@@ -112,7 +119,8 @@ class MysqlHelper:
         :param table:
         :return: list
         '''
-        data = self.query_data('select COLUMN_NAME from information_schema.COLUMNS where table_name = %s',params=table)
+        #data = self.query_data('select COLUMN_NAME from information_schema.COLUMNS where table_name = %s',params=table)
+        data = self.query_data('show columns from %s' % table)
         data = [d[0] for d in data]
         return data
 
@@ -128,7 +136,6 @@ class MysqlHelper:
         df.columns=cols
         return df
 
-
     def upload_df_to_db(self, df, table, if_exists='replace'):
         '''
         将dataframe上传到数据库内，
@@ -140,7 +147,7 @@ class MysqlHelper:
         '''
         if table not in self.all_tables:
             cols = df.columns
-            self.execute_sql('create table {}({})'.format(table, ' ,'.join(cols)))
+            self.execute_sql('create table {}({} text)'.format(table, ' text,'.join(cols)))
 
         if if_exists == 'replace':
             self.execute_sql('truncate table {}'.format(table))

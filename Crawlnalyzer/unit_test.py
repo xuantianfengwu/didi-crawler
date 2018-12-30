@@ -1,4 +1,5 @@
 from db_manager.mysql_manager import MysqlHelper
+from crawler.wb_crawler import Weibo_Crawler
 
 class Unit_Test:
     def __init__(self):
@@ -34,6 +35,22 @@ class Unit_Test:
         df2 = mysqlhelper.query_whole_table_as_dataframe('weibo_search_comments')
         print(df2.shape)
         print(df2.columns)
+
+    def test_weibo_crawler(self):
+        print('Start Testing Weibo_Crawler...')
+        wbcrawler = Weibo_Crawler()
+
+        res = wbcrawler.search_one_page('滴滴出行', 1, 'dict')
+        if 'created_time' in res:
+            print(True)
+
+        df = wbcrawler.search_one_page('滴滴出行', 1, 'df')
+        if df.shape[0]>0:
+            print(True)
+
+        res = wbcrawler.comment_one_page()
+        if 'created_time' in res:
+            print(True)
 
 
 if __name__ == '__main__':
